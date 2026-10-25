@@ -1,0 +1,46 @@
+name: Monitorar Passagens (Google Flights)
+
+on:
+  # Executa automaticamente de 1 em 1 hora (24/7)
+  schedule:
+    - cron: '0 * * * *'
+
+  # Permite executar manualmente pelo botão "Run workflow" no site/app do GitHub
+  # e até testar um preço alvo diferente na hora sem alterar o código!
+  workflow_dispatch:
+    inputs:
+      target_price:
+        description: 'Preço Alvo em R$ (deixe 6000 ou altere para testar)'
+        required: false
+        default: '6000'
+
+jobs:
+  verificar-voos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Baixar código do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Executar busca no Google Flights e enviar alerta no Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ORIGIN: ${{ vars.ORIGIN || 'GRU' }}
+          DESTINATION: ${{ vars.DESTINATION || 'LHR' }}
+          DEPARTURE_DATE: ${{ vars.DEPARTURE_DATE || '2027-04-21' }}
+          RETURN_DATE: ${{ vars.RETURN_DATE || '2027-04-26' }}
+          DIRECT_FLIGHT_ONLY: ${{ vars.DIRECT_FLIGHT_ONLY || 'true' }}
+          TARGET_PRICE: ${{ inputs.target_price || vars.TARGET_PRICE || '6000' }}
+          CURRENCY: 'BRL'
+        run: python3 flight_alert.py
