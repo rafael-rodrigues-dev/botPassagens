@@ -1,72 +1,73 @@
-# ✈️ Bot de Alerta de Passagens Aéreas (Google Flights + WhatsApp Twilio)
+# ✈️ Bot de Alerta de Passagens Aéreas (Google Flights + Telegram Bot)
 
-Este projeto monitora preços de passagens aéreas no **Google Flights** (com suporte estrito a **voos diretos / sem escalas**) e envia um alerta formatado no **WhatsApp** via **Twilio** sempre que o valor ficar abaixo da sua meta.
+Este projeto monitora preços de passagens aéreas no **Google Flights** (com suporte estrito a **voos diretos / sem escalas**) e envia um alerta formatado no **Telegram** sempre que o valor ficar abaixo da sua meta.
 
 ---
 
-## 📋 Pré-requisitos e Instalação
+## 🤖 Passo 1: Como criar seu Bot no Telegram (@BotFather)
 
-1. **Crie um ambiente virtual e instale as dependências:**
+1. Abra o Telegram e pesquise por **`@BotFather`** (ele tem um selo azul de verificado).
+2. Envie o comando:
+   ```text
+   /newbot
+   ```
+3. O BotFather vai pedir um **nome de exibição** para o seu bot. Digite, por exemplo:
+   ```text
+   Alerta de Passagens
+   ```
+4. Em seguida, ele vai pedir um **username** (precisa terminar obrigatoriamente com `bot`). Digite, por exemplo:
+   ```text
+   rafael_passagens_bot
+   ```
+5. Pronto! O BotFather vai responder com duas coisas importantes:
+   - Um **link** para o seu novo bot (ex: `t.me/rafael_passagens_bot`) -> **Clique nesse link e aperte em "Começar" (`Start`)** (isso é essencial para o bot poder te mandar mensagens).
+   - O seu **HTTP API Token** (algo como `7123456789:AAHxyz...`).
+
+---
+
+## ⚙️ Passo 2: Configurar o `.env`
+
+1. Abra o arquivo `.env` e cole o token que o `@BotFather` gerou:
+   ```ini
+   TELEGRAM_BOT_TOKEN=7123456789:AAHxyz...
+   ```
+2. **Não precisa procurar o seu `TELEGRAM_CHAT_ID` manualmente!** Depois de clicar em **Começar (`Start`)** no seu bot lá no Telegram, basta rodar o teste que o próprio script descobre o seu Chat ID sozinho e salva no `.env` automaticamente:
+   ```bash
+   python3 flight_alert.py --test-telegram
+   ```
+
+---
+
+## 🚀 Como Usar
+
+1. **Instalar as dependências:**
    ```bash
    python3 -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
    ```
 
-2. **Configure suas variáveis de ambiente:**
-   Copie o arquivo `.env.example` para `.env`:
+2. **Testar o envio de alerta no Telegram:**
    ```bash
-   cp .env.example .env
+   python3 flight_alert.py --test-telegram
    ```
-   Edite o arquivo `.env` com suas credenciais do Twilio:
-   - `TWILIO_ACCOUNT_SID`: Seu Account SID do painel Twilio.
-   - `TWILIO_AUTH_TOKEN`: Seu Auth Token do painel Twilio.
-   - `TWILIO_WHATSAPP_FROM`: Número do Sandbox do Twilio (ex: `whatsapp:+14155238886`).
-   - `TWILIO_WHATSAPP_TO`: Seu número de WhatsApp (ex: `whatsapp:+5511999999999`).
 
-   > **Nota sobre o Twilio Sandbox:** No console do Twilio (*Messaging -> Try it out -> Send a WhatsApp message*), envie o código de ativação (ex: `join <palavra-chave>`) do seu WhatsApp para o número do Sandbox para autorizar o recebimento de mensagens.
+3. **Executar uma busca única no Google Flights agora:**
+   ```bash
+   python3 flight_alert.py
+   ```
 
----
+4. **Deixar monitorando continuamente (ex: a cada 60 minutos):**
+   ```bash
+   python3 flight_alert.py --loop --interval 60
+   ```
 
-## 🚀 Como Usar
-
-O script já vem configurado por padrão com o seu exemplo:
-- **Trecho (Ida e Volta):** Guarulhos (`GRU`) ↔ Londres (`LHR`)
-- **Voo:** `DIRETO` (`max_stops=0` / sem escalas)
-- **Data Ida:** `21/04/2027` (`2027-04-21`)
-- **Data Volta:** `26/04/2027` (`2027-04-26`)
-- **Preço Alvo:** Abaixo de `R$ 6000`
-
-### 1. Testar a formatação (Modo Simulação / Dry-Run)
-Para testar a mensagem e o fluxo sem disparar o Twilio:
-```bash
-python3 flight_alert.py --test-whatsapp --dry-run
-```
-
-### 2. Testar o envio real no seu WhatsApp
-Para enviar uma mensagem de teste real no seu WhatsApp e validar suas credenciais Twilio:
-```bash
-python3 flight_alert.py --test-whatsapp
-```
-
-### 3. Executar uma busca única agora
-```bash
-python3 flight_alert.py
-```
-
-### 4. Monitoramento contínuo (ex: verificar a cada 60 minutos)
-```bash
-python3 flight_alert.py --loop --interval 60
-```
-
-### 5. Personalizar parâmetros via linha de comando
-Você também pode alterar datas, aeroportos ou preço alvo direto pelo terminal (aceita datas nos formatos `DD/MM/YYYY` ou `YYYY-MM-DD`):
-```bash
-python3 flight_alert.py \
-  --origin GRU \
-  --destination LHR \
-  --departure 21/04/2027 \
-  --return-date 26/04/2027 \
-  --target-price 6000
-```
-
+5. **Personalizar parâmetros via linha de comando:**
+   ```bash
+   python3 flight_alert.py \
+     --origin GRU \
+     --destination LHR \
+     --departure 21/04/2027 \
+     --return-date 26/04/2027 \
+     --target-price 6000
+   ```

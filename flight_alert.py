@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-Bot de Monitoramento de Passagens Aéreas (Google Flights + Twilio WhatsApp)
+Bot de Monitoramento de Passagens Aéreas (Google Flights + Telegram Bot)
 
 Pesquisa passagens aéreas no Google Flights (com filtro estrito de voo direto)
-e envia um alerta via WhatsApp usando a API do Twilio quando o preço atingir
-o valor alvo configurado.
+e envia um alerta formatado no Telegram quando o preço atingir o valor alvo configurado.
 """
 
 import argparse
+import html
+import json
 import logging
 import os
 import re
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 from urllib.parse import quote
-
-import urllib.request
-import urllib.parse
-import json
 
 try:
     from dotenv import load_dotenv
@@ -86,6 +86,11 @@ def format_date_br(date_str: str) -> str:
         return datetime.strptime(date_str, "%Y-%m-%d").strftime("%d/%m/%Y")
     except ValueError:
         return date_str
+
+
+def format_brl(value: float) -> str:
+    """Formata um float para padrão monetário brasileiro (ex: R$ 5.490,00)."""
+    return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def parse_price(price_val) -> Optional[float]:
@@ -261,7 +266,6 @@ def search_with_fast_flights(config: FlightConfig) -> List[FlightOffer]:
         elif isinstance(stops_val, int):
             stops_int = stops_val
         else:
-            # Em estruturas onde `flights` internos representam os segmentos de 1 trecho:
             sub_legs = getattr(item, "flights", [])
             stops_int = max(0, len(sub_legs) - 1) if isinstance(sub_legs, list) and sub_legs else 0
 
@@ -387,7 +391,8 @@ def search_flights(config: FlightConfig) -> List[FlightOffer]:
         logger.warning(f"Erro ao buscar via fast-flights: {exc}")
 
     # Se tiver SERPAPI_KEY configurada, usa como fallback automático
-    if os.getenv("SERPAPI_KEY", "").strip():
+    apikey = os.getenv("SERPAPI_KEY", "").strip()
+    if apikey and apikey != "sua_chave_serpapi_opcional":
         logger.info("Tentando fallback via SerpApi...")
         try:
             return search_with_serpapi(config)
@@ -397,92 +402,179 @@ def search_flights(config: FlightConfig) -> List[FlightOffer]:
     return []
 
 
-def format_whatsapp_message(config: FlightConfig, best_offer: FlightOffer, top_offers: List[FlightOffer]) -> str:
-    """Formata a mensagem de alerta para envio no WhatsApp."""
+def format_telegram_message(config: FlightConfig, best_offer: FlightOffer, top_offers: List[FlightOffer]) -> str:
+    """Formata a mensagem de alerta em HTML para envio no Telegram Bot."""
     trecho_tipo = "Ida e Volta" if config.return_date else "Só Ida"
     voo_tipo = "DIRETO (Sem escalas)" if config.direct_only else f"{best_offer.stops} parada(s)"
     economia = config.target_price - best_offer.price
 
     linhas = [
-        "✈️ *ALERTA DE PASSAGEM AÉREA!* ✈️",
+        "✈️ <b>ALERTA DE PASSAGEM AÉREA!</b> ✈️",
         "",
-        f"📍 *Trecho:* {config.origin} ↔ {config.destination} ({trecho_tipo})",
-        f"🛑 *Tipo de Voo:* {voo_tipo}",
-        f"📅 *Ida:* {format_date_br(config.departure_date)}",
+        f"📍 <b>Trecho:</b> {html.escape(config.origin)} ↔ {html.escape(config.destination)} ({trecho_tipo})",
+        f"🛑 <b>Tipo de Voo:</b> {voo_tipo}",
+        f"📅 <b>Ida:</b> {format_date_br(config.departure_date)}",
     ]
     if config.return_date:
-        linhas.append(f"📅 *Volta:* {format_date_br(config.return_date)}")
+        linhas.append(f"📅 <b>Volta:</b> {format_date_br(config.return_date)}")
 
     linhas.extend([
         "",
-        f"💰 *Menor Preço Encontrado:* R$ {best_offer.price:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-        f"🎯 *Seu Preço Alvo:* R$ {config.target_price:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-        f"📉 *Abaixo da meta em:* R$ {economia:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"💰 <b>Menor Preço Encontrado:</b> {format_brl(best_offer.price)}",
+        f"🎯 <b>Seu Preço Alvo:</b> {format_brl(config.target_price)}",
+        f"📉 <b>Abaixo da meta em:</b> {format_brl(economia)}",
         "",
-        "🏆 *Detalhes da Melhor Opção:*",
-        f"• *Companhia:* {best_offer.airline}",
-        f"• *Partida:* {best_offer.departure_time}",
-        f"• *Chegada:* {best_offer.arrival_time}",
-        f"• *Duração:* {best_offer.duration}",
+        "🏆 <b>Detalhes da Melhor Opção:</b>",
+        f"• <b>Companhia:</b> {html.escape(best_offer.airline)}",
+        f"• <b>Partida:</b> {html.escape(best_offer.departure_time)}",
+        f"• <b>Chegada:</b> {html.escape(best_offer.arrival_time)}",
+        f"• <b>Duração:</b> {html.escape(best_offer.duration)}",
     ])
 
     if len(top_offers) > 1:
         linhas.append("")
-        linhas.append("📋 *Outras opções diretas abaixo da meta:*")
+        linhas.append("📋 <b>Outras opções diretas abaixo da meta:</b>")
         for idx, offer in enumerate(top_offers[1:3], start=2):
-            preco_fmt = f"R$ {offer.price:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            linhas.append(f"{idx}. {offer.airline} - {preco_fmt} ({offer.duration})")
+            linhas.append(
+                f"{idx}. {html.escape(offer.airline)} - {format_brl(offer.price)} ({html.escape(offer.duration)})"
+            )
 
     linhas.extend([
         "",
-        f"🔗 *Ver no Google Flights:*",
-        best_offer.booking_url,
+        f'🔗 <a href="{html.escape(best_offer.booking_url)}">Abrir pesquisa no Google Flights</a>',
     ])
     return "\n".join(linhas)
 
 
-def send_whatsapp_alert(message_body: str, dry_run: bool = False) -> bool:
-    """Envia mensagem de alerta via WhatsApp usando a API do Twilio."""
+def discover_telegram_chat_id(bot_token: str) -> Optional[str]:
+    """
+    Consulta o endpoint getUpdates do Telegram para descobrir automaticamente o Chat ID
+    da última conversa enviada ao bot.
+    """
+    url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "botPassagens/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not data.get("ok"):
+            return None
+
+        results = data.get("result", [])
+        for update in reversed(results):
+            msg = update.get("message") or update.get("edited_message") or update.get("channel_post")
+            if msg and "chat" in msg and "id" in msg["chat"]:
+                chat_id = str(msg["chat"]["id"])
+                user_name = msg["chat"].get("first_name") or msg["chat"].get("username") or "Usuário"
+                logger.info(f"🔍 Chat ID encontrado automaticamente: {chat_id} ({user_name})")
+                return chat_id
+    except Exception as exc:
+        logger.debug(f"Não foi possível consultar getUpdates: {exc}")
+    return None
+
+
+def save_chat_id_to_env(chat_id: str) -> None:
+    """Salva o TELEGRAM_CHAT_ID descoberto diretamente no arquivo .env."""
+    env_path = ".env"
+    if not os.path.exists(env_path):
+        return
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        if re.search(r"^TELEGRAM_CHAT_ID=.*$", content, flags=re.MULTILINE):
+            new_content = re.sub(
+                r"^TELEGRAM_CHAT_ID=.*$",
+                f"TELEGRAM_CHAT_ID={chat_id}",
+                content,
+                flags=re.MULTILINE,
+            )
+        else:
+            new_content = content.rstrip() + f"\nTELEGRAM_CHAT_ID={chat_id}\n"
+
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        logger.info(f"💾 TELEGRAM_CHAT_ID={chat_id} salvo automaticamente no arquivo .env!")
+    except Exception as exc:
+        logger.warning(f"Não foi possível salvar TELEGRAM_CHAT_ID no .env: {exc}")
+
+
+def send_telegram_alert(message_html: str, dry_run: bool = False) -> bool:
+    """Envia mensagem de alerta via API HTTP do Telegram Bot."""
     if dry_run:
-        logger.info("[MODO SIMULAÇÃO / DRY-RUN] Mensagem que seria enviada via WhatsApp:\n" + "-" * 50 + f"\n{message_body}\n" + "-" * 50)
+        # Remove tags HTML básicas apenas para visualização limpa no terminal
+        clean_preview = re.sub(r"</?b>", "*", message_html)
+        logger.info(
+            "[MODO SIMULAÇÃO / DRY-RUN] Mensagem que seria enviada via Telegram:\n"
+            + "-" * 50
+            + f"\n{clean_preview}\n"
+            + "-" * 50
+        )
         return True
 
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
-    auth_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
-    from_whatsapp = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886").strip()
-    to_whatsapp = os.getenv("TWILIO_WHATSAPP_TO", "").strip()
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-    if not account_sid or not auth_token or not to_whatsapp:
+    if not bot_token or bot_token == "seu_token_do_botfather_aqui":
         logger.error(
-            "Credenciais do Twilio incompletas! Verifique TWILIO_ACCOUNT_SID, "
-            "TWILIO_AUTH_TOKEN e TWILIO_WHATSAPP_TO no arquivo .env."
+            "TELEGRAM_BOT_TOKEN não configurado! Crie seu bot no @BotFather e "
+            "coloque o token no arquivo .env."
         )
         return False
 
-    # Garante o prefixo "whatsapp:" exigido pelo Twilio
-    if not from_whatsapp.startswith("whatsapp:"):
-        from_whatsapp = f"whatsapp:{from_whatsapp}"
-    if not to_whatsapp.startswith("whatsapp:"):
-        to_whatsapp = f"whatsapp:{to_whatsapp}"
+    # Se o usuário ainda não preencheu o TELEGRAM_CHAT_ID, tenta descobrir automaticamente via getUpdates
+    if not chat_id or chat_id == "seu_chat_id_aqui":
+        logger.info("TELEGRAM_CHAT_ID vazio no .env. Tentando descobrir automaticamente...")
+        discovered = discover_telegram_chat_id(bot_token)
+        if discovered:
+            chat_id = discovered
+            os.environ["TELEGRAM_CHAT_ID"] = chat_id
+            save_chat_id_to_env(chat_id)
+        else:
+            logger.error(
+                "❌ Não foi possível encontrar seu TELEGRAM_CHAT_ID automaticamente.\n"
+                "👉 Abra o seu bot no Telegram, clique em 'Começar' (/start) ou envie um 'Oi', "
+                "e rode novamente!"
+            )
+            return False
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message_html,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False,
+    }
 
     try:
-        from twilio.rest import Client
-        client = Client(account_sid, auth_token)
-        message = client.messages.create(
-            body=message_body,
-            from_=from_whatsapp,
-            to=to_whatsapp,
+        data_bytes = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data_bytes,
+            headers={"Content-Type": "application/json", "User-Agent": "botPassagens/1.0"},
+            method="POST",
         )
-        logger.info(f"✅ Alerta enviado com sucesso via WhatsApp! (Twilio SID: {message.sid})")
-        return True
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            resp_data = json.loads(resp.read().decode("utf-8"))
+
+        if resp_data.get("ok"):
+            msg_id = resp_data.get("result", {}).get("message_id")
+            logger.info(f"✅ Alerta enviado com sucesso via Telegram! (Message ID: {msg_id})")
+            return True
+        else:
+            logger.error(f"❌ Resposta inesperada do Telegram: {resp_data}")
+            return False
+    except urllib.error.HTTPError as http_err:
+        err_body = http_err.read().decode("utf-8", errors="replace")
+        logger.error(f"❌ Erro HTTP ao enviar mensagem pelo Telegram ({http_err.code}): {err_body}")
+        return False
     except Exception as exc:
-        logger.error(f"❌ Falha ao enviar mensagem pelo Twilio: {exc}")
+        logger.error(f"❌ Falha ao enviar mensagem pelo Telegram: {exc}")
         return False
 
 
 def check_prices_and_notify(config: FlightConfig, dry_run: bool = False) -> bool:
     """
-    Executa uma verificação completa no Google Flights e dispara o alerta no WhatsApp
+    Executa uma verificação completa no Google Flights e dispara o alerta no Telegram
     caso encontre voos abaixo do preço alvo.
     """
     tipo_voo_str = "DIRETO" if config.direct_only else "Qualquer (com ou sem escalas)"
@@ -511,10 +603,10 @@ def check_prices_and_notify(config: FlightConfig, dry_run: bool = False) -> bool
     if matching_offers:
         logger.info(
             f"🎉 PREÇO ALVO ATINGIDO! Encontrado por R$ {best_offer.price:.2f} "
-            f"(Alvo: abaixo de R$ {config.target_price:.2f}). Enviando alerta..."
+            f"(Alvo: abaixo de R$ {config.target_price:.2f}). Enviando alerta no Telegram..."
         )
-        msg = format_whatsapp_message(config, best_offer, matching_offers)
-        return send_whatsapp_alert(msg, dry_run=dry_run)
+        msg = format_telegram_message(config, best_offer, matching_offers)
+        return send_telegram_alert(msg, dry_run=dry_run)
     else:
         diff = best_offer.price - config.target_price
         logger.info(
@@ -527,7 +619,7 @@ def check_prices_and_notify(config: FlightConfig, dry_run: bool = False) -> bool
 def load_config_from_args() -> tuple[FlightConfig, argparse.Namespace]:
     """Lê parâmetros do .env e permite sobrescrevê-los via linha de comando."""
     parser = argparse.ArgumentParser(
-        description="Monitora preços de passagens no Google Flights e envia alerta via WhatsApp (Twilio)."
+        description="Monitora preços de passagens no Google Flights e envia alerta via Telegram Bot."
     )
     parser.add_argument("--origin", default=os.getenv("ORIGIN", "GRU"), help="Aeroporto de origem (IATA, ex: GRU)")
     parser.add_argument("--destination", default=os.getenv("DESTINATION", "LHR"), help="Aeroporto de destino (IATA, ex: LHR)")
@@ -565,12 +657,17 @@ def load_config_from_args() -> tuple[FlightConfig, argparse.Namespace]:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Executa a busca real mas apenas exibe a mensagem no terminal sem chamar o Twilio",
+        help="Executa a busca real mas apenas exibe a mensagem no terminal sem chamar o Telegram",
     )
     parser.add_argument(
-        "--test-whatsapp",
+        "--test-telegram",
         action="store_true",
-        help="Envia uma mensagem de teste imediata para validar suas credenciais do Twilio WhatsApp",
+        help="Envia uma mensagem de teste imediata no Telegram para validar seu Bot Token e Chat ID",
+    )
+    parser.add_argument(
+        "--get-chat-id",
+        action="store_true",
+        help="Descobre e salva automaticamente o seu TELEGRAM_CHAT_ID no arquivo .env",
     )
 
     args = parser.parse_args()
@@ -594,8 +691,24 @@ def load_config_from_args() -> tuple[FlightConfig, argparse.Namespace]:
 def main():
     config, args = load_config_from_args()
 
-    if args.test_whatsapp:
-        logger.info("Enviando mensagem de teste para o WhatsApp via Twilio...")
+    if args.get_chat_id:
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        if not bot_token or bot_token == "seu_token_do_botfather_aqui":
+            logger.error("Preencha primeiro o TELEGRAM_BOT_TOKEN no arquivo .env!")
+            sys.exit(1)
+        chat_id = discover_telegram_chat_id(bot_token)
+        if chat_id:
+            save_chat_id_to_env(chat_id)
+        else:
+            logger.error(
+                "Nenhuma mensagem encontrada! Abra seu bot no Telegram, clique em 'Começar' (/start) "
+                "e rode este comando novamente."
+            )
+            sys.exit(1)
+        sys.exit(0)
+
+    if args.test_telegram:
+        logger.info("Enviando mensagem de teste para o Telegram...")
         sample_offer = FlightOffer(
             airline="British Airways / LATAM (Teste)",
             price=5490.00,
@@ -606,8 +719,8 @@ def main():
             stops=0,
             booking_url=build_google_flights_url(config),
         )
-        msg = format_whatsapp_message(config, sample_offer, [sample_offer])
-        send_whatsapp_alert(msg, dry_run=args.dry_run)
+        msg = format_telegram_message(config, sample_offer, [sample_offer])
+        send_telegram_alert(msg, dry_run=args.dry_run)
         sys.exit(0)
 
     if not args.loop:
