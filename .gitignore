@@ -1,0 +1,17 @@
+# Variáveis de ambiente e segredos (NUNCA enviar para o GitHub)
+.env
+
+# Ambientes virtuais Python
+venv/
+.venv/
+env/
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Arquivos de sistema / IDE
+.DS_Store
+.vscode/
+.idea/
